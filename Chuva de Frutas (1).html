@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chuva de Frutas</title>
+<style>
+:root{--bg1:#7fd6ff;--bg2:#d9f5c4;--ink:#2b1d4a;--card:#fff8e7;--acc:#ff5d73;--acc2:#ffb703;color-scheme:light dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg1:#1b1446;--bg2:#3b2a6e;--ink:#fff3d6;--card:#2c2260}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif;color:var(--ink);background:linear-gradient(var(--bg1),var(--bg2));overflow:hidden;touch-action:none;user-select:none}
+#wrap{position:relative;height:100%;max-width:560px;margin:0 auto}
+canvas{display:block;width:100%;height:100%}
+.hud{position:absolute;top:8px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:18px;pointer-events:none}
+.hud span{background:var(--card);padding:4px 10px;border-radius:14px}
+.btnrow{position:absolute;top:44px;right:10px;display:flex;gap:6px}
+.ib{border:0;background:var(--card);color:var(--ink);font-size:18px;width:38px;height:38px;border-radius:50%;cursor:pointer}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(20,10,50,.55);text-align:center;padding:20px}
+.ov.hide{display:none}
+h1{margin:0;font-size:42px;color:#fff;text-shadow:0 4px 0 var(--acc)}
+.ov p{margin:0;color:#fff;font-size:16px}
+.m{width:min(280px,80%);border:0;border-radius:16px;padding:12px;font:800 18px inherit;font-family:inherit;background:var(--acc2);color:#2b1d4a;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,.25)}
+.m:active{transform:translateY(3px);box-shadow:none}
+.m.on{background:var(--acc);color:#fff}
+.m.sec{background:var(--card);color:var(--ink)}
+.tag{font-size:14px;color:#fff;opacity:.9}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c"></canvas>
+<div class="hud"><span id="sc">0</span><span id="lv">❤️❤️❤️</span><span id="rc">🏆 0</span></div>
+<div class="btnrow"><button class="ib" id="bm" aria-label="Música">🎵</button><button class="ib" id="bs" aria-label="Efeitos">🔊</button><button class="ib" id="bp" aria-label="Pausar">⏸</button></div>
+<div class="ov" id="menu">
+<h1>🍎 Chuva de Frutas</h1>
+<p>Arraste o cesto para pegar as frutas. 3 frutas perdidas e acabou!</p>
+<p class="tag" id="recs"></p>
+<button class="m" data-mode="classic">Clássico</button>
+<button class="m" data-mode="rush">Frenético (rápido, 1 vida a menos)</button>
+<button class="m" data-mode="bomb">Bombas (evite 💣)</button>
+<button class="m sec" data-mode="zen">Zen (sem perder vidas)</button>
+<button class="m sec" id="mm">🎵 Música: ligada</button>
+<button class="m sec" id="ms">🔊 Efeitos: ligados</button>
+</div>
+<div class="ov hide" id="over">
+<h1 id="ot">Fim de jogo</h1>
+<p id="os"></p>
+<button class="m" id="again">Jogar de novo</button>
+<button class="m sec" id="tomenu">Menu</button>
+</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let W,H,dpr;
+function rs(){dpr=Math.min(devicePixelRatio||1,2);const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',rs);rs();
+const $=id=>document.getElementById(id);
+const FR=['🍎','🍌','🍇','🍊','🍓','🍉','🍍','🍒'];
+let st={on:false,paused:false},mode='classic',score=0,lives=3,caught=0,speed=2,items=[],parts=[],pops=[],bx=0,tx=0,spawn=0,lastT=0,combo=0;
+let musicOn=true,sfxOn=true;
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+let records={};
+try{records=JSON.parse(store.get('frutas-rec')||'{}')}catch(e){}
+const names={classic:'Clássico',rush:'Frenético',bomb:'Bombas',zen:'Zen'};
+function showRecs(){$('recs').textContent='Recordes — '+Object.keys(names).map(k=>names[k]+': '+(records[k]||0)).join(' | ');$('rc').textContent='🏆 '+(records[mode]||0)}
+showRecs();
+
+/* ===== Áudio ===== */
+let ac,master,mus,sfx,noteI=0,nextN=0,timer;
+function initAudio(){if(ac)return;try{ac=new (window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.connect(ac.destination);mus=ac.createGain();mus.gain.value=.12;mus.connect(master);sfx=ac.createGain();sfx.gain.value=.4;sfx.connect(master)}catch(e){}}
+function tone(f,d,type,dest,v=1,when=0,slide){if(!ac)return;const t=ac.currentTime+when,o=ac.createOscillator(),g=ac.createGain();o.type=type;o.frequency.setValueAtTime(f,t);if(slide)o.frequency.exponentialRampToValueAtTime(slide,t+d);g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(dest);o.start(t);o.stop(t+d+.02)}
+function sound(n){if(!sfxOn||!ac)return;if(n==='catch'){const b=500+Math.min(combo,10)*60;tone(b,.12,'triangle',sfx);tone(b*1.5,.15,'triangle',sfx,.8,.07)}
+else if(n==='miss')tone(300,.35,'sawtooth',sfx,.7,0,80);
+else if(n==='bomb'){tone(120,.5,'square',sfx,1,0,40)}
+else if(n==='up'){[523,659,784,1047].forEach((f,i)=>tone(f,.15,'square',sfx,.5,i*.08))}
+else if(n==='over'){[392,330,262,196].forEach((f,i)=>tone(f,.3,'triangle',sfx,.8,i*.2))}}
+const mel=[523,659,784,659,587,740,880,740,523,659,784,1047,988,784,659,587];
+const bass=[131,131,175,175,147,147,196,196];
+function sched(){if(!ac||!musicOn||!st.on||st.paused)return;const spb=.2/(1+(speed-2)*.05);while(nextN<ac.currentTime+.3){const w=nextN-ac.currentTime;tone(mel[noteI%16],.18,'square',mus,.5,Math.max(0,w));if(noteI%2===0)tone(bass[(noteI>>1)%8],.35,'triangle',mus,.9,Math.max(0,w));nextN+=spb;noteI++}}
+function startMusic(){initAudio();if(!ac)return;ac.resume();nextN=ac.currentTime+.05;noteI=0;clearInterval(timer);timer=setInterval(sched,100)}
+function stopMusic(){clearInterval(timer)}
+
+/* ===== Jogo ===== */
+function startGame(m){mode=m;initAudio();ac&&ac.resume();score=0;caught=0;combo=0;lives=m==='rush'?2:3;speed=m==='rush'?3.2:2;items=[];parts=[];pops=[];bx=tx=W/2;spawn=0;st={on:true,paused:false};$('menu').classList.add('hide');$('over').classList.add('hide');$('bp').textContent='⏸';updHud();showRecs();lastT=performance.now();if(musicOn)startMusic();requestAnimationFrame(loop)}
+function updHud(){$('sc').textContent=score;$('lv').textContent=mode==='zen'?'☀️ Zen':'❤️'.repeat(Math.max(lives,0))+'🖤'.repeat(Math.max((mode==='rush'?2:3)-lives,0))}
+function addItem(){const bomb=mode==='bomb'&&Math.random()<.22;const gold=!bomb&&Math.random()<.06;items.push({x:24+Math.random()*(W-48),y:-30,e:bomb?'💣':gold?'⭐':FR[Math.random()*FR.length|0],bomb,gold,r:Math.random()*6,vr:(Math.random()-.5)*.1,s:.85+Math.random()*.3})}
+function burst(x,y,col,n=10){for(let i=0;i<n;i++)parts.push({x,y,vx:(Math.random()-.5)*6,vy:-Math.random()*5-1,l:1,c:col})}
+function pop(x,y,t,c){pops.push({x,y,t,l:1,c})}
+function levelUp(){speed+=.5;sound('up');pop(W/2,H/2,'⚡ Mais rápido!','#ffb703')}
+function loseLife(x){if(mode==='zen')return;lives--;sound('miss');combo=0;burst(x,H-20,'#ff5d73');updHud();if(lives<=0)end()}
+function end(){st.on=false;stopMusic();sound('over');const nr=score>(records[mode]||0);if(nr){records[mode]=score;store.set('frutas-rec',JSON.stringify(records))}showRecs();$('ot').textContent=nr?'🏆 Novo recorde!':'Fim de jogo';$('os').textContent='Pontos: '+score+' | Frutas: '+caught+' | Recorde ('+names[mode]+'): '+records[mode];setTimeout(()=>$('over').classList.remove('hide'),600)}
+function loop(t){if(!st.on)return;requestAnimationFrame(loop);const dt=Math.min((t-lastT)/16.67,3);lastT=t;if(st.paused){draw();return}
+bx+=(tx-bx)*Math.min(1,.35*dt);spawn-=dt;if(spawn<=0){addItem();spawn=Math.max(18,75-speed*8)}
+const by=H-48,bw=80;
+for(let i=items.length-1;i>=0;i--){const it=items[i];it.y+=speed*dt*(it.gold?1.3:1);it.r+=it.vr*dt;
+if(it.y>by-20&&it.y<by+16&&Math.abs(it.x-bx)<bw/2+8){items.splice(i,1);
+if(it.bomb){sound('bomb');burst(it.x,it.y,'#555',16);combo=0;pop(it.x,it.y-20,'-1 ❤️','#ff5d73');loseLife(it.x);continue}
+combo++;const p=it.gold?5:1+(combo>=5?1:0);score+=p;caught++;sound('catch');burst(it.x,it.y,it.gold?'#ffd700':'#7bd88f');pop(it.x,it.y-20,'+'+p,'#fff');updHud();
+if(caught%15===0)levelUp();continue}
+if(it.y>H-6){items.splice(i,1);if(!it.bomb)loseLife(it.x);}}
+for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=.3*dt;p.l-=.03*dt}parts=parts.filter(p=>p.l>0);
+for(const p of pops){p.y-=.8*dt;p.l-=.02*dt}pops=pops.filter(p=>p.l>0);
+draw()}
+let cl=[{x:50,y:90,s:1},{x:260,y:150,s:.7},{x:150,y:230,s:.9}];
+function draw(){ctx.clearRect(0,0,W,H);ctx.font='60px serif';ctx.globalAlpha=.6;for(const c of cl){c.x+=.15*c.s;if(c.x>W+60)c.x=-80;ctx.fillText('☁️',c.x,c.y)}ctx.globalAlpha=1;
+ctx.textAlign='center';ctx.textBaseline='middle';
+for(const it of items){ctx.save();ctx.translate(it.x,it.y);ctx.rotate(it.r);ctx.font=(36*it.s)+'px serif';ctx.fillText(it.e,0,0);ctx.restore()}
+ctx.font='64px serif';ctx.save();ctx.translate(bx,H-44);ctx.scale(1+Math.min(combo,10)*.01,1);ctx.fillText('🧺',0,0);ctx.restore();
+for(const p of parts){ctx.globalAlpha=Math.max(p.l,0);ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,4,0,7);ctx.fill()}
+ctx.font='800 22px "Trebuchet MS",sans-serif';for(const p of pops){ctx.globalAlpha=Math.max(p.l,0);ctx.fillStyle=p.c;ctx.strokeStyle='#2b1d4a';ctx.lineWidth=4;ctx.strokeText(p.t,p.x,p.y);ctx.fillText(p.t,p.x,p.y)}
+ctx.globalAlpha=1;if(combo>=3){ctx.font='800 16px "Trebuchet MS",sans-serif';ctx.fillStyle='#fff';ctx.strokeStyle='#2b1d4a';ctx.strokeText('Combo x'+combo,W/2,70);ctx.fillText('Combo x'+combo,W/2,70)}
+ctx.textAlign='start'}
+function mv(e){const r=cv.getBoundingClientRect();tx=Math.max(40,Math.min(W-40,(e.touches?e.touches[0].clientX:e.clientX)-r.left))}
+cv.addEventListener('pointermove',mv);cv.addEventListener('pointerdown',mv);
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='a')tx=Math.max(40,tx-70);if(e.key==='ArrowRight'||e.key==='d')tx=Math.min(W-40,tx+70);if(e.key==='p')pause()});
+function pause(){if(!st.on)return;st.paused=!st.paused;$('bp').textContent=st.paused?'▶️':'⏸';if(st.paused)stopMusic();else{lastT=performance.now();if(musicOn)startMusic()}}
+function setMusic(v){musicOn=v;$('bm').textContent=v?'🎵':'🔇';$('mm').textContent='🎵 Música: '+(v?'ligada':'desligada');if(!v)stopMusic();else if(st.on&&!st.paused)startMusic()}
+function setSfx(v){sfxOn=v;$('bs').textContent=v?'🔊':'🔈';$('ms').textContent='🔊 Efeitos: '+(v?'ligados':'desligados')}
+$('bp').onclick=pause;$('bm').onclick=()=>setMusic(!musicOn);$('mm').onclick=()=>setMusic(!musicOn);$('bs').onclick=()=>setSfx(!sfxOn);$('ms').onclick=()=>setSfx(!sfxOn);
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>startGame(b.dataset.mode));
+$('again').onclick=()=>startGame(mode);
+$('tomenu').onclick=()=>{$('over').classList.add('hide');$('menu').classList.remove('hide');showRecs()};
+draw();
+</script>
+</body>
+</html>
